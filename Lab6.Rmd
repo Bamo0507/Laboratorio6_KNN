@@ -376,6 +376,57 @@ Por último, podemos ver que Naive Bayes, el cual se realizó en el laboratorio 
 
 ## **Actividades 4 y 5: Modelo de Clasificación con KNN y Evaluación en Prueba**
 
+```{r nb-clf-lab5}
+
+# Selección de K inicial usando la regla sqrt(n)
+k_knn_clf <- round(sqrt(nrow(X_train_clf)))
+
+# Ajustar K al impar más cercano para evitar empates
+if (k_knn_clf %% 2 == 0) {
+  k_knn_clf <- k_knn_clf + 1
+}
+
+# Modelo de clasificación con KNN
+pred_knn_clf <- class::knn(
+  train = X_train_clf,
+  test = X_test_clf,
+  cl = y_train_clf,
+  k = k_knn_clf
+)
+
+# Evaluación del modelo
+cm_knn_clf <- caret::confusionMatrix(
+  data = pred_knn_clf,
+  reference = y_test_clf
+)
+
+# Exactitud
+exactitud_knn_clf <- round(as.numeric(cm_knn_clf$overall["Accuracy"]) * 100, 2)
+
+# Métricas por clase
+metricas_por_clase <- as.data.frame(cm_knn_clf$byClass)[, c("Precision", "Recall", "F1")]
+metricas_por_clase$Clase <- rownames(metricas_por_clase)
+rownames(metricas_por_clase) <- NULL
+metricas_por_clase <- metricas_por_clase[, c("Clase", "Precision", "Recall", "F1")]
+
+# Redondear tabla
+metricas_por_clase$Precision <- round(metricas_por_clase$Precision, 4)
+metricas_por_clase$Recall    <- round(metricas_por_clase$Recall, 4)
+metricas_por_clase$F1        <- round(metricas_por_clase$F1, 4)
+
+# Promedios macro
+precision_macro <- round(mean(metricas_por_clase$Precision, na.rm = TRUE), 4)
+recall_macro    <- round(mean(metricas_por_clase$Recall, na.rm = TRUE), 4)
+f1_macro        <- round(mean(metricas_por_clase$F1, na.rm = TRUE), 4)
+
+cat("K utilizado en KNN:", k_knn_clf, "\n")
+cat("Exactitud KNN Clasificacion:", exactitud_knn_clf, "%\n")
+cat("Precision macro:", precision_macro, "\n")
+cat("Recall macro:", recall_macro, "\n")
+cat("F1 macro:", f1_macro, "\n\n")
+
+metricas_por_clase
+```
 ---
 
 ## **Actividad 6: Matriz de Confusión**
