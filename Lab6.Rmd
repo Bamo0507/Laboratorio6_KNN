@@ -1,0 +1,349 @@
+---
+title: "Laboratorio 6 - K-Nearest Neighbors (KNN)"
+author: "Bryan Martínez, Adriana Palacios, y Nery Molina"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(dplyr)
+library(ggplot2)
+library(class)
+library(FNN)
+library(kknn)
+library(caret)
+library(e1071)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+load("listings.RData")
+```
+
+## **Repositorio**
+
+https://github.com/Bamo0507/Laboratorio6_KNN
+
+---
+
+## **Preprocesamiento — Reutilizado de laboratorios anteriores**
+
+Se aplica exactamente el mismo preprocesamiento, semilla y partición de los Laboratorios 3, 4 y 5 para garantizar que todos los modelos sean comparables bajo las mismas condiciones.
+
+```{r preprocesamiento}
+listings$price <- as.numeric(gsub("[$,]", "", listings$price))
+
+vars_eliminar <- c(
+  "id", "listing_url", "scrape_id", "picture_url",
+  "host_id", "host_url", "host_thumbnail_url", "host_picture_url",
+  "name", "description", "neighborhood_overview", "host_about",
+  "host_name", "host_location", "amenities", "host_verifications",
+  "source", "last_scraped", "calendar_last_scraped", "calendar_updated",
+  "host_since", "first_review", "last_review",
+  "bathrooms_text", "host_total_listings_count", "neighbourhood",
+  "minimum_nights_avg_ntm", "maximum_nights_avg_ntm",
+  "number_of_reviews_ltm", "number_of_reviews_l30d", "number_of_reviews_ly",
+  "calculated_host_listings_count_entire_homes",
+  "calculated_host_listings_count_private_rooms",
+  "calculated_host_listings_count_shared_rooms",
+  "estimated_revenue_l365d",
+  "host_has_profile_pic", "neighbourhood_group_cleansed"
+)
+
+listings_clean <- listings[, !(names(listings) %in% vars_eliminar)]
+```
+
+```{r division}
+listings_model <- listings_clean[!is.na(listings_clean$price), ]
+
+set.seed(42)
+trainIndex <- sample(seq_len(nrow(listings_model)), size = floor(0.7 * nrow(listings_model)))
+train <- listings_model[ trainIndex, ]
+test  <- listings_model[-trainIndex, ]
+
+cat("Total de filas en dataset:", nrow(listings_model), "\n")
+cat("Datos entrenamiento:", nrow(train), "\n")
+cat("Datos prueba:", nrow(test), "\n")
+```
+
+```{r datos-numericos}
+train_num <- na.omit(train[, sapply(train, is.numeric)])
+test_num  <- test[, names(train_num)]
+test_num  <- na.omit(test_num)
+
+cat("Predictores numéricos disponibles:", ncol(train_num) - 1, "\n")
+cat("Filas en entrenamiento (numérico):", nrow(train_num), "\n")
+cat("Filas en prueba (numérico):", nrow(test_num), "\n")
+```
+
+```{r variable-categorica}
+q33 <- as.numeric(quantile(train_num$price, probs = 0.33, na.rm = TRUE))
+q67 <- as.numeric(quantile(train_num$price, probs = 0.67, na.rm = TRUE))
+
+train_clf <- train_num %>%
+  mutate(
+    price_cat = cut(
+      price,
+      breaks = c(-Inf, q33, q67, Inf),
+      labels = c("Economica", "Intermedia", "Cara"),
+      right = TRUE,
+      ordered_result = TRUE
+    )
+  )
+
+test_clf <- test_num %>%
+  mutate(
+    price_cat = cut(
+      price,
+      breaks = c(-Inf, q33, q67, Inf),
+      labels = c("Economica", "Intermedia", "Cara"),
+      right = TRUE,
+      ordered_result = TRUE
+    )
+  )
+
+cat("Limite superior Economica:", q33, "\n")
+cat("Limite superior Intermedia:", q67, "\n")
+```
+
+---
+
+## **Escalado de datos — Normalización Min-Max**
+
+EXPLCIACION PENDIENTE PARA ESCALADO
+
+$$x_{\text{norm}} = \frac{x - x_{\min}}{x_{\max} - x_{\min}}$$
+
+El mínimo y máximo se calculan **únicamente sobre el conjunto de entrenamiento** y se aplican tanto a entrenamiento como a prueba. Esto evita filtración de información del conjunto de prueba hacia el modelo. EXPLICACION PENDIENTE
+
+```{r escalado}
+# Calcular min y max de cada columna en entrenamiento
+mins <- apply(train_num, 2, min, na.rm = TRUE)
+maxs <- apply(train_num, 2, max, na.rm = TRUE)
+
+# Función de normalización Min-Max
+min_max_scale <- function(x, min_val, max_val) {
+  rango <- max_val - min_val
+  if (rango == 0) return(rep(0, length(x)))   # columna constante
+  (x - min_val) / rango
+}
+
+# Aplicar normalización columna por columna
+train_scaled <- as.data.frame(mapply(min_max_scale, train_num, mins, maxs))
+test_scaled  <- as.data.frame(mapply(min_max_scale, test_num,  mins, maxs))
+
+# Separar predictores y variable objetivo (precio)
+X_train <- train_scaled %>% select(-price)
+X_test  <- test_scaled  %>% select(-price)
+y_train <- train_num$price
+y_test  <- test_num$price
+
+cat("Rango de price en train escalado: [",
+    round(min(train_scaled$price), 4), ",",
+    round(max(train_scaled$price), 4), "]\n")
+cat("Dimensiones predictores entrenamiento:", nrow(X_train), "x", ncol(X_train), "\n")
+```
+
+```{r escalado-clasificacion}
+# Conjuntos escalados para clasificación (sin la columna price, con price_cat)
+train_clf_scaled <- train_scaled %>%
+  select(-price) %>%
+  mutate(price_cat = train_clf$price_cat)
+
+test_clf_scaled <- test_scaled %>%
+  select(-price) %>%
+  mutate(price_cat = test_clf$price_cat)
+
+X_train_clf <- train_clf_scaled %>% select(-price_cat)
+X_test_clf  <- test_clf_scaled  %>% select(-price_cat)
+y_train_clf <- train_clf_scaled$price_cat
+y_test_clf  <- test_clf_scaled$price_cat
+```
+
+```{r funciones-metricas, include=FALSE}
+calc_rmse <- function(obs, pred) sqrt(mean((obs - pred)^2, na.rm = TRUE))
+calc_mae  <- function(obs, pred) mean(abs(obs - pred), na.rm = TRUE)
+calc_r2   <- function(obs, pred) {
+  ss_res <- sum((obs - pred)^2, na.rm = TRUE)
+  ss_tot <- sum((obs - mean(obs, na.rm = TRUE))^2, na.rm = TRUE)
+  1 - ss_res / ss_tot
+}
+```
+
+---
+
+## **Resultados de modelos anteriores**
+
+Esta sección re-entrena los mejores modelos de los Laboratorios 3, 4 y 5 sobre los mismos conjuntos de entrenamiento y prueba para tener sus métricas disponibles en la comparación final.
+
+### Regresión Lineal (Lab 3)
+
+```{r lm-lab3}
+vars_mejor <- c(
+  "host_listings_count", "accommodates", "bathrooms", "bedrooms", "beds",
+  "minimum_nights", "maximum_nights", "minimum_minimum_nights", "maximum_minimum_nights",
+  "availability_365", "estimated_occupancy_l365d",
+  "review_scores_cleanliness", "review_scores_location", "review_scores_value",
+  "calculated_host_listings_count"
+)
+
+vars_disponibles <- intersect(vars_mejor, names(train_num))
+train_lm <- train_num[, c(vars_disponibles, "price")]
+test_lm  <- test_num[,  c(vars_disponibles, "price")]
+
+modelo_lm <- lm(price ~ ., data = train_lm)
+pred_lm   <- predict(modelo_lm, newdata = test_lm)
+
+rmse_lm <- round(calc_rmse(test_lm$price, pred_lm), 2)
+mae_lm  <- round(calc_mae(test_lm$price, pred_lm), 2)
+r2_lm   <- round(calc_r2(test_lm$price, pred_lm), 4)
+
+cat("Regresion Lineal — RMSE:", rmse_lm, "| MAE:", mae_lm, "| R2:", r2_lm, "\n")
+```
+
+### Árbol de Regresión (Lab 4)
+
+```{r arbol-reg-lab4}
+arbol_reg <- rpart(price ~ ., data = train_num, method = "anova",
+                   control = rpart.control(maxdepth = 8))
+pred_arbol_reg <- predict(arbol_reg, newdata = test_num)
+
+rmse_arbol_reg <- round(calc_rmse(test_num$price, pred_arbol_reg), 2)
+mae_arbol_reg  <- round(calc_mae(test_num$price, pred_arbol_reg), 2)
+r2_arbol_reg   <- round(calc_r2(test_num$price, pred_arbol_reg), 4)
+
+cat("Arbol Regresion (depth=8) — RMSE:", rmse_arbol_reg, "| MAE:", mae_arbol_reg, "| R2:", r2_arbol_reg, "\n")
+```
+
+### Random Forest Regresión (Lab 4)
+
+```{r rf-reg-lab4}
+set.seed(42)
+rf_reg <- randomForest(price ~ ., data = train_num, ntree = 100, importance = TRUE)
+pred_rf_reg <- predict(rf_reg, newdata = test_num)
+
+rmse_rf_reg <- round(calc_rmse(test_num$price, pred_rf_reg), 2)
+mae_rf_reg <- round(calc_mae(test_num$price, pred_rf_reg), 2)
+r2_rf_reg <- round(calc_r2(test_num$price, pred_rf_reg), 4)
+
+cat("Random Forest Regresion — RMSE:", rmse_rf_reg, "| MAE:", mae_rf_reg, "| R2:", r2_rf_reg, "\n")
+```
+
+### Árbol de Clasificación (Lab 4)
+
+```{r arbol-clf-lab4}
+train_tree_clf <- train_clf %>% select(-price)
+test_tree_clf  <- test_clf  %>% select(-price)
+
+set.seed(42)
+arbol_clf <- rpart(price_cat ~ ., data = train_tree_clf, method = "class")
+pred_arbol_clf <- predict(arbol_clf, newdata = test_tree_clf, type = "class")
+
+exactitud_arbol_clf <- round(
+  mean(as.character(pred_arbol_clf) == as.character(test_tree_clf$price_cat), na.rm = TRUE) * 100, 2
+)
+cat("Arbol Clasificacion — Exactitud:", exactitud_arbol_clf, "%\n")
+```
+
+### Random Forest Clasificación (Lab 4)
+
+```{r rf-clf-lab4}
+set.seed(42)
+rf_clf <- randomForest(price_cat ~ ., data = train_tree_clf, ntree = 100)
+pred_rf_clf <- predict(rf_clf, newdata = test_tree_clf)
+
+exactitud_rf_clf <- round(
+  mean(as.character(pred_rf_clf) == as.character(test_tree_clf$price_cat), na.rm = TRUE) * 100, 2
+)
+cat("Random Forest Clasificacion — Exactitud:", exactitud_rf_clf, "%\n")
+```
+
+### Naive Bayes Regresión (Lab 5)
+
+```{r nb-reg-lab5}
+# Discretizacion con 20 percentiles (misma logica que Lab 5)
+price_breaks_nb <- unique(quantile(train_num$price, probs = seq(0, 1, by = 0.05), na.rm = TRUE))
+
+train_nb_reg <- train_num %>%
+  mutate(price_bin = cut(price, breaks = price_breaks_nb,
+                         include.lowest = TRUE, ordered_result = FALSE)) %>%
+  select(-price)
+
+bin_means_nb <- train_num %>%
+  mutate(price_bin = cut(price, breaks = price_breaks_nb, include.lowest = TRUE)) %>%
+  group_by(price_bin) %>%
+  summarise(bin_mean = mean(price, na.rm = TRUE), .groups = "drop")
+
+test_nb_reg <- test_num %>%
+  mutate(price_bin = cut(price, breaks = price_breaks_nb,
+                         include.lowest = TRUE, ordered_result = FALSE)) %>%
+  select(-price)
+
+modelo_nb_reg <- naiveBayes(price_bin ~ ., data = train_nb_reg)
+pred_nb_bin   <- predict(modelo_nb_reg, newdata = test_nb_reg)
+pred_nb_num   <- bin_means_nb$bin_mean[
+  match(as.character(pred_nb_bin), as.character(bin_means_nb$price_bin))
+]
+
+rmse_nb_reg <- round(calc_rmse(test_num$price, pred_nb_num), 2)
+mae_nb_reg  <- round(calc_mae(test_num$price, pred_nb_num), 2)
+r2_nb_reg   <- round(calc_r2(test_num$price, pred_nb_num), 4)
+
+cat("Naive Bayes Regresion — RMSE:", rmse_nb_reg, "| MAE:", mae_nb_reg, "| R2:", r2_nb_reg, "\n")
+```
+
+### Naive Bayes Clasificación (Lab 5)
+
+```{r nb-clf-lab5}
+modelo_nb_clf  <- naiveBayes(price_cat ~ ., data = train_clf %>% select(-price))
+pred_nb_clf    <- predict(modelo_nb_clf, newdata = test_clf %>% select(-price, -price_cat))
+
+exactitud_nb_clf <- round(
+  mean(as.character(pred_nb_clf) == as.character(test_clf$price_cat), na.rm = TRUE) * 100, 2
+)
+cat("Naive Bayes Clasificacion — Exactitud:", exactitud_nb_clf, "%\n")
+```
+
+---
+
+## **Actividad 1: Modelo de Regresión con KNN**
+
+---
+
+## **Actividad 2: Análisis de Resultados del Modelo de Regresión**
+
+---
+
+## **Actividad 3: Comparación con Modelos de Regresión Anteriores**
+
+---
+
+## **Actividades 4 y 5: Modelo de Clasificación con KNN y Evaluación en Prueba**
+
+---
+
+## **Actividad 6: Matriz de Confusión**
+
+---
+
+## **Actividad 7: Análisis de Sobreajuste**
+
+---
+
+## **Actividad 8: Validación Cruzada**
+
+---
+
+## **Actividad 9: Tuneo de Hiperparámetros**
+
+---
+
+## **Actividad 10: Métrica de Distancia y Valor de P**
+
+---
+
+## **Actividad 11: Comparación Final de Clasificación**
