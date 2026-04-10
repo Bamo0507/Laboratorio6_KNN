@@ -114,11 +114,11 @@ cat("Limite superior Intermedia:", q67, "\n")
 
 ## **Escalado de datos — Normalización Min-Max**
 
-EXPLCIACION PENDIENTE PARA ESCALADO
+Al trabajar con KNN es necesario escalar los datos ya que, en este caso, nosotros lo que hacemos es, en base a los valores de las variables, tratar de posicionar cada uno de los documentos. Entonces si no escalamos los datos de una variable, puede ser que una termine pesando más que otra. Por ejemplo que las unidades de una estén en miles o en decenas de miles pero que en otro esté medido como unidades. Entonces para evitar este tipo de situaciones, se trata de trabajar todo con valores que sean proporciones, las cuales van a estar entre 0 y 1 acorde a los valores que se registran para cada variable. 
 
 $$x_{\text{norm}} = \frac{x - x_{\min}}{x_{\max} - x_{\min}}$$
 
-El mínimo y máximo se calculan **únicamente sobre el conjunto de entrenamiento** y se aplican tanto a entrenamiento como a prueba. Esto evita filtración de información del conjunto de prueba hacia el modelo. EXPLICACION PENDIENTE
+Cabe mencionar que al trabajar con el mínimo y el máximo, este se calcula únicamente sobre el conjunto de entrenamiento. Si lo hiciéramos sobre los datos completos, estaríamos sesgando nuestro modelo a posibles errores. Por ejemplo afuera del conjunto de entrenamiento está el máximo para una variable, digamos, que es muy superior a los demás.
 
 ```{r escalado}
 # Calcular min y max de cada columna en entrenamiento
@@ -312,13 +312,65 @@ cat("Naive Bayes Clasificacion — Exactitud:", exactitud_nb_clf, "%\n")
 
 ## **Actividad 1: Modelo de Regresión con KNN**
 
+Al trabajar con KNN como modelo de regresión, en este caso no se genera una función durante el entrenamiento que sea capaz de establecer, en base a las características, el precio de una casa. Al contrario, en este caso lo que se hace es que se almacenan los datos ya escalados. A la hora de predecir, lo que hace el algoritmo es que, para el punto que se está colocando, va a ver a sus K vecinos más cercanos. En base a las características de sus vecinos cercanos, va a sacar un promedio de sus precios y esa va a ser la predicción que va a tirar.
+
+Como se ha visto en clase, el valor de K determina contra cuántos vecinos se va a comparar cada punto nuevo. Por convención, se parte de la raíz cuadrada del número de observaciones de entrenamiento y se redondea al entero impar más cercano. La razón detrás de buscar un valor impar es evitar empates, situación que ocurre en clasificación cuando exactamente la mitad de los vecinos pertenece a una clase y la otra mitad a otra, sin que haya forma de decidir cuál predomina. Cabe aclarar que en regresión este problema no aplica directamente, ya que la predicción se obtiene promediando los valores numéricos de los K vecinos y ese promedio siempre produce un resultado sin ambigüedad. Sin embargo, se mantiene la convención de usar un K impar por consistencia con la práctica general del algoritmo.
+
+```{r knn-reg-train}
+# Calculo del K inicial: raiz cuadrada del n de entrenamiento, impar mas cercano
+k_inicial <- floor(sqrt(nrow(X_train)))
+if (k_inicial %% 2 == 0) k_inicial <- k_inicial + 1
+
+cat("K inicial seleccionado:", k_inicial, "\n")
+cat("Observaciones de entrenamiento:", nrow(X_train), "\n")
+
+# Entrenamiento y prediccion del modelo KNN de regresion
+set.seed(123)
+knn_reg <- knn.reg(
+  train = X_train,
+  test  = X_test,
+  y     = y_train,
+  k     = k_inicial
+)
+
+pred_knn_reg <- knn_reg$pred
+```
+
 ---
 
 ## **Actividad 2: Análisis de Resultados del Modelo de Regresión**
 
+```{r knn-reg-metricas}
+rmse_knn_reg <- round(calc_rmse(y_test, pred_knn_reg), 2)
+mae_knn_reg  <- round(calc_mae(y_test, pred_knn_reg), 2)
+mse_knn_reg  <- round(mean((y_test - pred_knn_reg)^2, na.rm = TRUE), 2)
+r2_knn_reg   <- round(calc_r2(y_test, pred_knn_reg), 4)
+
+cat("RMSE:", rmse_knn_reg,"\n")
+cat("MAE:", mae_knn_reg,"\n")
+cat("MSE:", mse_knn_reg,"\n")
+cat("R2:", r2_knn_reg,"\n")
+```
+
+A primera vista, los resultados están bastante malos. En un modelo, podemos ver un R2 de tan solo 0.1156, lo cual es bastante bajo, porque estamos diciendo que nuestro modelo únicamente explica el 11.56% de la varianza de los datos; prácticamente nada.
+
+Al ver el MAE, si fuera una casa, no estaría tan mal, porque solamente serían 309 dólares. Pero ya en el contexto en el que estamos trabajando, con Airbnb, donde lo que se está haciendo es rentar por noche, una diferencia de 309 dólares es considerablemente elevada. En base a eso, si yo miro algo que está por encima de su precio, por algo que prácticamente son más de 2000 quetzales, obviamente no voy a optar por esas opciones y voy a tratar de buscar alternativas.
+
+Entonces, ahí es donde va la parte más relevante de lo malos que son estos resultados. Incluso al analizar el RMSE, que es la raíz cuadrada del MSE, esto ya nos da un indicio de que probablemente en el dataset hay varios outliers. Como el RMSE castiga bastante a estos valores, puede ser que ahí esté la explicación de estos resultados.
+
+Vemos que la diferencia entre el MAE, que eran 309 dólares, se dispara a 2,565 en el RMSE, y esto es alarmante, porque probablemente el modelo deje cercanos a los puntos algunas viviendas que tengan el precio muy elevado. Entonces, al sacar el promedio, se verán impactadas considerablemente. 
+
 ---
 
 ## **Actividad 3: Comparación con Modelos de Regresión Anteriores**
+
+Como ya se mencionó, el rendimiento del modelo fue bastante bajo en este escenario. A continuación, se estará analizando cómo se compara con los modelos que se han generado en laboratorios anteriores.
+
+Como punto de partida, si vemos el modelo de regresión lineal, el cual es el más simple de todos los que se han trabajado, podemos ver de que, aunque nuestros resultados con KNN fueron malos, estaba peor este modelo, ya que el R2 presentado fue de 0.1053. No es mucha la diferencia, pero sigue explicando una menor cantidad de los datos que nuestro modelo con KNN. Si vemos el MAE, podemos ver que está por encima, por un poco más de 200 dólares, y al RMSE se pasa también bastante. Pero es bastante equiparable a lo que tuvimos ahorita, porque ahorita se tenía un RMSE de 2.565, mientras que en regresión lineal este fue de 2.580. Pero, tomando las demás métricas, se logra ver con claridad de que le fue peor a la regresión lineal y a este.
+
+Luego, pasándonos a los árboles, tanto el árbol de regresión como el Random forest de regresión, que se trabajó en su momento, podemos ver de que el árbol de regresión tiene un desempeño considerablemente mejor, ya que, en este, teníamos que el modelo explicaba el 67.55% de los datos, el MAE era de 246 dólares, contra los 309 dólares que tuvimos ahorita, y el RMSE fue muchísimo más bajo, pues en los árboles de regresión fue de 1554.16. Y ahí, yendo con el Random forest de regresión, en este caso, el R2 estaba en 0.7823, y estamos hablando de una diferencia de más del 60% entre KNN y Random Forest. Y de ahí, viendo el MAE, vemos que este está apenas en 179, una diferencia de 120 dólares, y el RMSE está en 1272.99. Con esto, podemos ver que ya con modelos más complejos, como los árboles de decisión, se logran clasificar, al menos, para este problema, o dar un mejor precio para la vivienda en Airbnb, que lo que logró hacer ahorita KNN.
+
+Por último, podemos ver que Naive Bayes, el cual se realizó en el laboratorio anterior, estaba en un R2 negativo, un MAE de por arriba de 600 dólares y el RMSE más alto que hemos registrado con 2805 dólares. Entonces, si bien fue malo el desempeño de KNN, el peor hasta el momento ha sido Naive Bayes. El KNN es el tercero de los peores modelos que se han generado hasta el momento. 
 
 ---
 
