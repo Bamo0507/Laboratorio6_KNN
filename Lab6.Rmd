@@ -376,7 +376,7 @@ Por último, podemos ver que Naive Bayes, el cual se realizó en el laboratorio 
 
 ## **Actividades 4 y 5: Modelo de Clasificación con KNN y Evaluación en Prueba**
 
-```{r nb-clf-lab5}
+```{r knn-clf-train}
 
 # Selección de K inicial usando la regla sqrt(n)
 k_knn_clf <- round(sqrt(nrow(X_train_clf)))
@@ -427,13 +427,85 @@ cat("F1 macro:", f1_macro, "\n\n")
 
 metricas_por_clase
 ```
+
+En este caso el modelo tuvo una exactitud de 61.45%, lo cual es bueno considerando que es más del 60% de los datos, pues se clasificaron correctamente. No es un caso ideal ni algo que sea óptimo para salir a producción, pero al menos se obtuvieron resultados razonables.
+
+Tuvimos:
+- una precisión de 0.6169
+- un Recall de 0.6157
+- y un F1 de 0.6155
+
+Sorprendentemente podemos ver que tuvo mejores resultados que el árbol de clasificación porque el árbol de clasificación tuvo una exactitud de 60.59%. Entonces a diferencia de cuando lo hicimos con regresión, el árbol de regresión fue muy superior al KNN que se hizo para el precio de la casa, pero ahorita que estamos evaluándolo con clasificación presentó ligeramente mejores resultados. No podemos quitar el hecho de que funcionó mejor.
+
+Sin embargo, al evaluarlo contra Random Forest, el cual tuvo una exactitud de 75.26%, vemos que ahí sí nos quedamos un poco cortos. Es una diferencia de más del 10%. Si nos vamos a Naive Bayes, que es el que ha tenido constantemente el peor desempeño o uno de los más bajos, este tuvo una exactitud de 41.39%, entonces es mejor que éste.
+
 ---
 
 ## **Actividad 6: Matriz de Confusión**
 
+```{r knn-clf-matriz}
+cm_knn_clf$table
+```
+
+Analizando la matriz de confusión, se puede observar que el modelo tiene un desempeño razonable en las tres categorías, concentrando la mayor cantidad de observaciones en la diagonal principal: 4329 correctamente clasificadas como Económica, 3185 como Intermedia y 3956 como Cara.
+
+Sin embargo, donde el modelo comete más errores es al predecir la categoría Intermedia. De las 6309 propiedades que fueron predichas como Intermedia, 1536 eran en realidad Económicas y 1588 eran Caras, sumando 3124 errores en esa fila. Esto también se refleja al analizar las columnas: existe una tendencia del modelo a inclinarse hacia la categoría Intermedia, lo que sugiere un sesgo leve aunque mucho menos marcado que el observado en Naive Bayes en el laboratorio anterior.
+
+En cuanto a la importancia de los errores, el caso más preocupante desde el punto de vista del negocio es el de las 575 propiedades que el modelo predijo como Económicas siendo en realidad Caras. Para SmartStay Advisors, esto implicaría recomendar al cliente una propiedad que está muy por encima de su presupuesto, lo cual deteriora directamente la confianza en el servicio. En sentido contrario, las 320 propiedades reales Económicas predichas como Caras representan el error opuesto: el cliente probablemente descartaría esas opciones al verlas etiquetadas como caras, perdiendo la oportunidad de una buena recomendación.
+
 ---
 
 ## **Actividad 7: Análisis de Sobreajuste**
+
+```{r knn-clf-overfitting}
+# Prediccion sobre el conjunto de entrenamiento con el mismo K
+pred_knn_clf_train <- class::knn(
+  train = X_train_clf,
+  test  = X_train_clf,
+  cl    = y_train_clf,
+  k     = k_knn_clf
+)
+
+cm_train <- caret::confusionMatrix(
+  data      = pred_knn_clf_train,
+  reference = y_train_clf
+)
+
+exactitud_train <- round(as.numeric(cm_train$overall["Accuracy"]) * 100, 2)
+
+metricas_train <- as.data.frame(cm_train$byClass)[, c("Precision", "Recall", "F1")]
+metricas_train$Clase <- rownames(metricas_train)
+rownames(metricas_train) <- NULL
+metricas_train <- metricas_train[, c("Clase", "Precision", "Recall", "F1")]
+metricas_train$Precision <- round(metricas_train$Precision, 4)
+metricas_train$Recall    <- round(metricas_train$Recall, 4)
+metricas_train$F1        <- round(metricas_train$F1, 4)
+
+precision_macro_train <- round(mean(metricas_train$Precision, na.rm = TRUE), 4)
+recall_macro_train    <- round(mean(metricas_train$Recall, na.rm = TRUE), 4)
+f1_macro_train        <- round(mean(metricas_train$F1, na.rm = TRUE), 4)
+
+cat("-- Entrenamiento --\n")
+cat("Exactitud:", exactitud_train, "%\n")
+cat("Precision macro:", precision_macro_train, "\n")
+cat("Recall macro:", recall_macro_train, "\n")
+cat("F1 macro:", f1_macro_train, "\n\n")
+
+cat("-- Prueba --\n")
+cat("Exactitud:", exactitud_knn_clf, "%\n")
+cat("Precision macro:", precision_macro, "\n")
+cat("Recall macro:", recall_macro, "\n")
+cat("F1 macro:", f1_macro, "\n\n")
+
+cat("-- Matriz de confusion (entrenamiento) --\n")
+cm_train$table
+```
+
+Al comparar los resultados entre el conjunto de entrenamiento y el de prueba, lo primero que se puede notar es que las métricas son prácticamente idénticas. La exactitud baja apenas de 61.63% a 61.45%, el F1 pasa de 0.6173 a 0.6155, y lo mismo ocurre con la precisión y el Recall. Diferencias de ese nivel son mínimas y no representan una caída significativa en el desempeño del modelo.
+
+Esto nos indica con claridad que el modelo no está sobreajustado. El sobreajuste se daría si el modelo hubiera memorizado los datos de entrenamiento, obteniendo métricas muy altas en ese conjunto pero fallando considerablemente al enfrentarse a datos nuevos. Aquí ese comportamiento no se presenta: el modelo se comporta de forma consistente en ambos escenarios, y la matriz de confusión del entrenamiento muestra un patrón muy similar al de prueba, con la diagonal concentrando la mayor cantidad de observaciones en los tres casos.
+
+Lo que sí se puede decir es que el modelo tiene un desempeño moderado en general. Un 61% de exactitud está lejos de ser óptimo, pero no se puede atribuir a sobreajuste. KNN tiene un techo de desempeño en este dataset, probablemente limitado por la alta dimensionalidad de los datos, que como se vio en la clase, KNN funciona mejor cuando no hay muchas variables, algo que no se cumple en este escenario.
 
 ---
 
