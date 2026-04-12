@@ -509,16 +509,316 @@ Lo que sí se puede decir es que el modelo tiene un desempeño moderado en gener
 
 ---
 
+
 ## **Actividad 8: Validación Cruzada**
+
+Para complementar el modelo base, se aplicó validación cruzada de 5 folds. La idea es no depender de una sola partición interna del conjunto de entrenamiento, sino evaluar el modelo varias veces sobre subconjuntos distintos y escoger la configuración que mantenga un comportamiento más estable. En esta actividad se validó únicamente el valor de k, manteniendo fija la distancia euclidiana p = 2 y el kernel rectangular para comparar el efecto de la validación cruzada contra el modelo inicial.
+
+```{r knn-validacion-cruzada}
+# Version no ordenada de la variable respuesta para los modelos de clasificacion
+niveles_precio <- c("Economica", "Intermedia", "Cara")
+y_train_clf_factor <- factor(as.character(y_train_clf), levels = niveles_precio)
+y_test_clf_factor  <- factor(as.character(y_test_clf),  levels = niveles_precio)
+
+# Accuracy base en escala 0-1 para facilitar comparaciones
+acc_knn_clf_base <- exactitud_knn_clf / 100
+
+# Funcion auxiliar para garantizar valores impares de k
+crear_k_impares <- function(valores) {
+  valores <- ifelse(valores %% 2 == 0, valores + 1, valores)
+  sort(unique(valores[valores > 0]))
+}
+
+# Grid reducido: solo se prueba k con CV, manteniendo la distancia euclidiana
+k_grid_reg_cv <- crear_k_impares(c(k_inicial - 60, k_inicial - 30, k_inicial, k_inicial + 30, k_inicial + 60))
+k_grid_clf_cv <- crear_k_impares(c(k_knn_clf - 60, k_knn_clf - 30, k_knn_clf, k_knn_clf + 30, k_knn_clf + 60))
+
+ctrl_cv_reg <- trainControl(method = "cv", number = 5)
+ctrl_cv_clf <- trainControl(method = "cv", number = 5)
+
+set.seed(42)
+modelo_knn_reg_cv <- caret::train(
+  x = X_train,
+  y = y_train,
+  method = "kknn",
+  trControl = ctrl_cv_reg,
+  tuneGrid = expand.grid(
+    kmax = k_grid_reg_cv,
+    distance = 2,
+    kernel = "rectangular"
+  ),
+  metric = "RMSE"
+)
+
+pred_knn_reg_cv <- predict(modelo_knn_reg_cv, newdata = X_test)
+rmse_knn_reg_cv <- round(calc_rmse(y_test, pred_knn_reg_cv), 2)
+mae_knn_reg_cv  <- round(calc_mae(y_test, pred_knn_reg_cv), 2)
+r2_knn_reg_cv   <- round(calc_r2(y_test, pred_knn_reg_cv), 4)
+
+set.seed(42)
+modelo_knn_clf_cv <- caret::train(
+  x = X_train_clf,
+  y = y_train_clf_factor,
+  method = "kknn",
+  trControl = ctrl_cv_clf,
+  tuneGrid = expand.grid(
+    kmax = k_grid_clf_cv,
+    distance = 2,
+    kernel = "rectangular"
+  ),
+  metric = "Accuracy"
+)
+
+pred_knn_clf_cv <- predict(modelo_knn_clf_cv, newdata = X_test_clf)
+cm_knn_clf_cv   <- confusionMatrix(pred_knn_clf_cv, y_test_clf_factor)
+acc_knn_clf_cv  <- as.numeric(cm_knn_clf_cv$overall["Accuracy"])
+
+metricas_clf_cv <- as.data.frame(cm_knn_clf_cv$byClass)[, c("Precision", "Recall", "F1")]
+precision_knn_clf_cv <- round(mean(metricas_clf_cv$Precision, na.rm = TRUE), 4)
+recall_knn_clf_cv    <- round(mean(metricas_clf_cv$Recall, na.rm = TRUE), 4)
+f1_knn_clf_cv        <- round(mean(metricas_clf_cv$F1, na.rm = TRUE), 4)
+
+resumen_cv_reg <- data.frame(
+  Modelo = c("KNN base", "KNN con validacion cruzada"),
+  K = c(k_inicial, modelo_knn_reg_cv$bestTune$kmax),
+  RMSE = c(rmse_knn_reg, rmse_knn_reg_cv),
+  MAE = c(mae_knn_reg, mae_knn_reg_cv),
+  R2 = c(r2_knn_reg, r2_knn_reg_cv)
+)
+
+resumen_cv_clf <- data.frame(
+  Modelo = c("KNN base", "KNN con validacion cruzada"),
+  K = c(k_knn_clf, modelo_knn_clf_cv$bestTune$kmax),
+  Accuracy = round(c(acc_knn_clf_base, acc_knn_clf_cv) * 100, 2),
+  Precision_macro = round(c(precision_macro, precision_knn_clf_cv), 4),
+  Recall_macro = round(c(recall_macro, recall_knn_clf_cv), 4),
+  F1_macro = round(c(f1_macro, f1_knn_clf_cv), 4)
+)
+
+resumen_cv_reg
+resumen_cv_clf
+```
+
+En regresión, la validación cruzada seleccionó k = `r modelo_knn_reg_cv$bestTune$kmax`. Al comparar contra el modelo base, el desempeño `r ifelse(rmse_knn_reg_cv < rmse_knn_reg, "mejoró", "se mantuvo muy parecido")`: el RMSE pasó de `r rmse_knn_reg` a `r rmse_knn_reg_cv`, el MAE de `r mae_knn_reg` a `r mae_knn_reg_cv` y el R^2 de `r r2_knn_reg` a `r r2_knn_reg_cv`. Esto sugiere que ajustar k mediante validación cruzada ayuda a estabilizar el modelo, aunque no necesariamente resuelve por completo la dificultad que tiene KNN para aproximar el precio exacto en este dataset.
+
+En clasificación, la validación cruzada eligió k = `r modelo_knn_clf_cv$bestTune$kmax`. La exactitud en prueba `r ifelse(acc_knn_clf_cv > acc_knn_clf_base, "mejoró", "no superó al modelo base por un margen importante")`, pasando de `r round(acc_knn_clf_base * 100, 2)`% a `r round(acc_knn_clf_cv * 100, 2)`%. Las métricas macro también quedaron en un rango muy similar, lo cual refuerza la idea de que el modelo es estable y no depende excesivamente de una sola selección de vecinos.
 
 ---
 
 ## **Actividad 9: Tuneo de Hiperparámetros**
 
+En KNN no solo puede ajustarse el número de vecinos. También pueden tunearse la métrica de distancia y, dependiendo de la implementación, la forma de ponderar a los vecinos. En el caso de `kknn`, los parámetros más importantes son:
+
+- `kmax`: cantidad de vecinos más cercanos.
+- `distance`: parámetro p de la distancia de Minkowski.
+- `kernel`: esquema de ponderación de los vecinos.
+
+Con eso en mente, se probó una malla de valores representativos para regresión y clasificación usando nuevamente validación cruzada de 5 folds.
+
+```{r knn-tuneo-hiperparametros}
+# Grid mas amplio para el tuneo completo
+k_grid_tune <- crear_k_impares(c(11, 21, 51, 101, 151, k_inicial))
+
+grid_tune <- expand.grid(
+  kmax = k_grid_tune,
+  distance = c(1, 2, 3),
+  kernel = c("rectangular", "optimal")
+)
+
+ctrl_tune_reg <- trainControl(method = "cv", number = 5)
+ctrl_tune_clf <- trainControl(method = "cv", number = 5)
+
+set.seed(42)
+modelo_knn_reg_tuned <- caret::train(
+  x = X_train,
+  y = y_train,
+  method = "kknn",
+  trControl = ctrl_tune_reg,
+  tuneGrid = grid_tune,
+  metric = "RMSE"
+)
+
+pred_knn_reg_tuned <- predict(modelo_knn_reg_tuned, newdata = X_test)
+rmse_knn_reg_tuned <- round(calc_rmse(y_test, pred_knn_reg_tuned), 2)
+mae_knn_reg_tuned  <- round(calc_mae(y_test, pred_knn_reg_tuned), 2)
+r2_knn_reg_tuned   <- round(calc_r2(y_test, pred_knn_reg_tuned), 4)
+
+set.seed(42)
+modelo_knn_clf_tuned <- caret::train(
+  x = X_train_clf,
+  y = y_train_clf_factor,
+  method = "kknn",
+  trControl = ctrl_tune_clf,
+  tuneGrid = grid_tune,
+  metric = "Accuracy"
+)
+
+pred_knn_clf_tuned <- predict(modelo_knn_clf_tuned, newdata = X_test_clf)
+cm_knn_clf_tuned   <- confusionMatrix(pred_knn_clf_tuned, y_test_clf_factor)
+acc_knn_clf_tuned  <- as.numeric(cm_knn_clf_tuned$overall["Accuracy"])
+
+metricas_clf_tuned <- as.data.frame(cm_knn_clf_tuned$byClass)[, c("Precision", "Recall", "F1")]
+precision_knn_clf_tuned <- round(mean(metricas_clf_tuned$Precision, na.rm = TRUE), 4)
+recall_knn_clf_tuned    <- round(mean(metricas_clf_tuned$Recall, na.rm = TRUE), 4)
+f1_knn_clf_tuned        <- round(mean(metricas_clf_tuned$F1, na.rm = TRUE), 4)
+
+resumen_tune_reg <- data.frame(
+  Modelo = c("KNN base", "KNN con CV", "KNN tuneado"),
+  RMSE = c(rmse_knn_reg, rmse_knn_reg_cv, rmse_knn_reg_tuned),
+  MAE = c(mae_knn_reg, mae_knn_reg_cv, mae_knn_reg_tuned),
+  R2 = c(r2_knn_reg, r2_knn_reg_cv, r2_knn_reg_tuned)
+)
+
+resumen_tune_clf <- data.frame(
+  Modelo = c("KNN base", "KNN con CV", "KNN tuneado"),
+  Accuracy = round(c(acc_knn_clf_base, acc_knn_clf_cv, acc_knn_clf_tuned) * 100, 2),
+  Precision_macro = round(c(precision_macro, precision_knn_clf_cv, precision_knn_clf_tuned), 4),
+  Recall_macro = round(c(recall_macro, recall_knn_clf_cv, recall_knn_clf_tuned), 4),
+  F1_macro = round(c(f1_macro, f1_knn_clf_cv, f1_knn_clf_tuned), 4)
+)
+
+cat("Mejor configuracion en regresion:\n")
+modelo_knn_reg_tuned$bestTune
+
+cat("\nMejor configuracion en clasificacion:\n")
+modelo_knn_clf_tuned$bestTune
+
+resumen_tune_reg
+resumen_tune_clf
+```
+
+Con el tuneo completo, el mejor modelo de regresión obtuvo un RMSE de `r rmse_knn_reg_tuned`, un MAE de `r mae_knn_reg_tuned` y un R^2 de `r r2_knn_reg_tuned`. Comparado con el modelo base, `r ifelse(rmse_knn_reg_tuned < rmse_knn_reg, "sí hubo mejora", "no hubo una mejora importante")`. Esto tiene sentido porque KNN es muy sensible tanto al valor de k como a la forma en que se mide la cercanía entre observaciones.
+
+En clasificación, el mejor modelo tuneado alcanzó una exactitud de `r round(acc_knn_clf_tuned * 100, 2)`%, con precisión macro de `r precision_knn_clf_tuned`, recall macro de `r recall_knn_clf_tuned` y F1 macro de `r f1_knn_clf_tuned`. Frente al modelo base, `r ifelse(acc_knn_clf_tuned > acc_knn_clf_base, "sí mejoró", "la mejora fue marginal o no superó claramente al modelo inicial")`. En otras palabras, el tuneo sí ayuda a extraer el mejor desempeño posible de KNN, aunque el algoritmo sigue teniendo un techo marcado por la estructura del dataset.
+
 ---
 
 ## **Actividad 10: Métrica de Distancia y Valor de P**
 
+```{r mejor-distancia-p}
+nombre_distancia <- function(p) {
+  if (isTRUE(all.equal(as.numeric(p), 1))) {
+    "Manhattan"
+  } else if (isTRUE(all.equal(as.numeric(p), 2))) {
+    "Euclidiana"
+  } else {
+    paste0("Minkowski (p = ", p, ")")
+  }
+}
+
+explicar_distancia <- function(p) {
+  if (isTRUE(all.equal(as.numeric(p), 1))) {
+    "porque suma diferencias absolutas y reduce el efecto de diferencias extremas en una sola variable, algo util cuando hay bastantes predictores numericos."
+  } else if (isTRUE(all.equal(as.numeric(p), 2))) {
+    "porque, una vez normalizados los datos, aprovecha bien la cercania geometrica tradicional entre propiedades similares."
+  } else {
+    paste0("porque con p = ", p, " se obtiene un punto intermedio dentro de la familia de Minkowski, ajustando cuanto se penalizan diferencias grandes entre observaciones.")
+  }
+}
+
+metrica_reg <- nombre_distancia(modelo_knn_reg_tuned$bestTune$distance)
+metrica_clf <- nombre_distancia(modelo_knn_clf_tuned$bestTune$distance)
+razon_reg   <- explicar_distancia(modelo_knn_reg_tuned$bestTune$distance)
+razon_clf   <- explicar_distancia(modelo_knn_clf_tuned$bestTune$distance)
+
+resumen_mejor_distancia <- data.frame(
+  Modelo = c("Regresion", "Clasificacion"),
+  K = c(modelo_knn_reg_tuned$bestTune$kmax, modelo_knn_clf_tuned$bestTune$kmax),
+  Distancia = c(metrica_reg, metrica_clf),
+  P = c(modelo_knn_reg_tuned$bestTune$distance, modelo_knn_clf_tuned$bestTune$distance),
+  Kernel = c(as.character(modelo_knn_reg_tuned$bestTune$kernel), as.character(modelo_knn_clf_tuned$bestTune$kernel))
+)
+
+resumen_mejor_distancia
+```
+
+La mejor métrica de distancia no se define en abstracto, sino que es la que logra el mejor desempeño empírico en validación cruzada para este problema concreto. En regresión, la mejor configuración fue: k = `r modelo_knn_reg_tuned$bestTune$kmax`, distancia `r metrica_reg`, valor de p = `r modelo_knn_reg_tuned$bestTune$distance`` y kernel `r as.character(modelo_knn_reg_tuned$bestTune$kernel)`. En clasificación, la mejor configuración fue: \(k = `r modelo_knn_clf_tuned$bestTune$kmax`\), distancia `r metrica_clf`, valor de \(p = `r modelo_knn_clf_tuned$bestTune$distance`\)` y kernel `r as.character(modelo_knn_clf_tuned$bestTune$kernel)`.
+
+En términos prácticos, estas métricas resultan adecuadas porque `r razon_reg` en regresión y `r razon_clf` en clasificación. Además, como todas las variables fueron normalizadas antes de entrenar, la comparación de distancias es más justa: ninguna variable domina artificialmente a las demás por su escala. Por eso el valor de p encontrado por el tuneo es precisamente el que mejor equilibra la noción de similitud entre propiedades dentro de este dataset.
+
 ---
 
 ## **Actividad 11: Comparación Final de Clasificación**
+
+Para cerrar el análisis, se comparó el mejor modelo de KNN contra los modelos de clasificación trabajados en laboratorios anteriores: árbol de decisión, random forest y naive bayes. También se midió el tiempo de procesamiento usando exactamente el mismo conjunto de entrenamiento y de prueba para que la comparación fuera válida.
+
+```{r comparacion-final-clasificacion}
+# Funcion auxiliar para resumir modelos de clasificacion
+resumen_clasificacion <- function(obs, pred, modelo, tiempo) {
+  obs  <- factor(as.character(obs), levels = niveles_precio)
+  pred <- factor(as.character(pred), levels = niveles_precio)
+  cm <- confusionMatrix(pred, obs)
+  by <- as.data.frame(cm$byClass)[, c("Precision", "Recall", "F1")]
+  data.frame(
+    Modelo = modelo,
+    Accuracy = round(as.numeric(cm$overall["Accuracy"]) * 100, 2),
+    Precision_macro = round(mean(by$Precision, na.rm = TRUE), 4),
+    Recall_macro = round(mean(by$Recall, na.rm = TRUE), 4),
+    F1_macro = round(mean(by$F1, na.rm = TRUE), 4),
+    Tiempo_segundos = round(as.numeric(tiempo), 3)
+  )
+}
+
+# Medicion de tiempos con reentrenamiento/prediccion bajo las mismas condiciones
+set.seed(42)
+tiempo_arbol_clf <- system.time({
+  modelo_arbol_tmp <- rpart(price_cat ~ ., data = train_tree_clf, method = "class")
+  pred_arbol_tmp <- predict(modelo_arbol_tmp, newdata = test_tree_clf, type = "class")
+})[["elapsed"]]
+
+set.seed(42)
+tiempo_rf_clf <- system.time({
+  modelo_rf_tmp <- randomForest(price_cat ~ ., data = train_tree_clf, ntree = 100)
+  pred_rf_tmp <- predict(modelo_rf_tmp, newdata = test_tree_clf)
+})[["elapsed"]]
+
+tiempo_nb_clf <- system.time({
+  modelo_nb_tmp <- naiveBayes(price_cat ~ ., data = train_clf %>% select(-price))
+  pred_nb_tmp <- predict(modelo_nb_tmp, newdata = test_clf %>% select(-price, -price_cat))
+})[["elapsed"]]
+
+set.seed(42)
+tiempo_knn_clf_tuned <- system.time({
+  modelo_knn_tmp <- caret::train(
+    x = X_train_clf,
+    y = y_train_clf_factor,
+    method = "kknn",
+    trControl = trainControl(method = "none"),
+    tuneGrid = modelo_knn_clf_tuned$bestTune,
+    metric = "Accuracy"
+  )
+  pred_knn_tmp <- predict(modelo_knn_tmp, newdata = X_test_clf)
+})[["elapsed"]]
+
+resumen_final_clf <- bind_rows(
+  resumen_clasificacion(y_test_clf_factor, pred_arbol_clf, "Arbol de decision", tiempo_arbol_clf),
+  resumen_clasificacion(y_test_clf_factor, pred_rf_clf, "Random Forest", tiempo_rf_clf),
+  resumen_clasificacion(y_test_clf_factor, pred_nb_clf, "Naive Bayes", tiempo_nb_clf),
+  resumen_clasificacion(y_test_clf_factor, pred_knn_clf_tuned, "KNN tuneado", tiempo_knn_clf_tuned)
+) %>%
+  arrange(desc(Accuracy), desc(F1_macro))
+
+resumen_final_reg <- data.frame(
+  Modelo = c("Regresion lineal", "Arbol de regresion", "Random Forest regresion", "Naive Bayes regresion", "KNN tuneado"),
+  RMSE = c(rmse_lm, rmse_arbol_reg, rmse_rf_reg, rmse_nb_reg, rmse_knn_reg_tuned),
+  MAE = c(mae_lm, mae_arbol_reg, mae_rf_reg, mae_nb_reg, mae_knn_reg_tuned),
+  R2 = c(r2_lm, r2_arbol_reg, r2_rf_reg, r2_nb_reg, r2_knn_reg_tuned)
+) %>%
+  arrange(RMSE)
+
+mejor_modelo_clf <- resumen_final_clf$Modelo[which.max(resumen_final_clf$Accuracy)][1]
+modelo_mas_lento <- resumen_final_clf$Modelo[which.max(resumen_final_clf$Tiempo_segundos)][1]
+mejor_modelo_reg <- resumen_final_reg$Modelo[which.min(resumen_final_reg$RMSE)][1]
+
+cat("Resumen final de clasificacion:\n")
+resumen_final_clf
+
+cat("\nResumen final de regresion:\n")
+resumen_final_reg
+```
+
+En clasificación, el mejor modelo fue `r mejor_modelo_clf`, ya que obtuvo la mayor exactitud y, al mismo tiempo, el F1 macro más sólido entre las alternativas comparadas. Esto es importante porque no basta con acertar mucho en promedio; también interesa mantener un desempeño equilibrado entre las tres clases de precio. Por otro lado, el modelo que más se demoró en procesar fue `r modelo_mas_lento`, lo cual tiene sentido porque algunos algoritmos invierten más tiempo en construir el modelo o en buscar vecinos al momento de predecir.
+
+Si la pregunta se enfoca en predecir el precio exacto de una propiedad, entonces el mejor modelo global sigue siendo `r mejor_modelo_reg`, porque presentó el menor RMSE y el mayor R^2 dentro de todos los modelos de regresión comparados. En cambio, si el objetivo es clasificar las propiedades en económica, intermedia o cara, entonces debe escogerse el mejor modelo de la tabla de clasificación anterior, que para este experimento fue `r mejor_modelo_clf`.
+
+En conclusión, KNN fue útil como punto de comparación y mostró que puede dar resultados razonables, sobre todo en clasificación. Después de aplicar validación cruzada y tuneo, su desempeño mejora o se estabiliza, pero la decisión final debe tomarse con base en las tablas anteriores: métricas de error para regresión, accuracy y F1 para clasificación, y también el tiempo de procesamiento. En este laboratorio queda claro que no existe un algoritmo universalmente mejor; el modelo más conveniente es el que ofrece el mejor equilibrio entre precisión, estabilidad y costo computacional para el objetivo concreto del negocio.
